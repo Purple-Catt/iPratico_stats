@@ -221,4 +221,4 @@ def analyze_restaurant_orders(file_path):
 
 
 if __name__ == "__main__":
-    a, b = analyze_restaurant_orders('C:\\Users\\marco\\Desktop\\Code\\shift_planner\\test_ipratico.xlsx')
+    a, b = analyze_restaurant_orders('.\\test_ipratico.xlsx')
