@@ -1,5 +1,9 @@
 import pandas as pd
-import numpy as np
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import os
+
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 def analyze_restaurant_orders(file_path):
@@ -10,20 +14,24 @@ def analyze_restaurant_orders(file_path):
     and 'SEPARA CONTO'. Ignores orders without a cover charge ('coperto').
 
     Parameters:
-    file_path (str): Path to the Excel (.xls) file.
+        file_path (str): The file path to the Excel (.xlsx) order history file.
 
     Returns:
-    pd.DataFrame: A DataFrame containing the processed and filtered valid orders.
+        tuple:
+            - *result_df* (pd.DataFrame): DataFrame containing the processed valid orders,
+              including order type, total price, cover count, and price per cover.
+            - *summary_df* (pd.DataFrame): DataFrame containing the overall summary metrics
+              (total covers, total revenue, weighted and simple average cover prices,
+            and total orders analyzed).
     """
-    # 1. Load the .xls file without headers, treating the entire sheet as a raw matrix
-    # Note: Ensure 'xlrd' is installed (pip install xlrd) to read old .xls files
+    # 1. Load the .xlsx file
     raw_df = pd.read_excel(file_path, header=None)
 
     records = []
     current_record_rows = []
     empty_row_count = 0
 
-    # 2. Segment the records based on two consecutive empty rows
+    # Segment the records based on two consecutive empty rows
     for idx, row in raw_df.iterrows():
         is_empty = row.isna().all()
 
@@ -33,6 +41,7 @@ def analyze_restaurant_orders(file_path):
             if empty_row_count >= 2 and current_record_rows:
                 records.append(pd.DataFrame(current_record_rows))
                 current_record_rows = []
+
         else:
             empty_row_count = 0  # Reset counter if the row contains data
             current_record_rows.append(row)
@@ -43,50 +52,50 @@ def analyze_restaurant_orders(file_path):
 
     print(f"Found {len(records)} raw order blocks in the file.")
 
-    # 3. Filter and normalize records
+    # Filter and normalize records
     valid_orders = []
     romana_signatures = set()  # Set to track and filter out duplicate entries for 'CONTO ALLA ROMANA'
     for rec in records:
-        # Clean the block by dropping fully empty rows and columns
         rec = rec.dropna(how='all', axis=0).dropna(how='all', axis=1)
         if rec.empty:
             continue
 
-        # The first cell of each record defines the order type
         first_cell = str(rec.iloc[0, 0]).strip().upper()
 
         recognized_types = ["DOCUMENTO EMESSO", "CONTO ALLA ROMANA", "SEPARA CONTO"]
         if not any(order_type in first_cell for order_type in recognized_types):
             continue
-            continue  # Skip if the header is unrecognized
 
         # Handle duplicates for 'CONTO ALLA ROMANA'
         if "CONTO ALLA ROMANA" in first_cell:
             # Estraiamo solo le righe che appartengono all'"ORDINE ORIGINALE" per fare il confronto dei duplicati
             original_order_rows = []
             capturing = False
+
             for _, r in rec.iterrows():
                 r_vals = [str(v).strip().upper() for v in r.values if pd.notna(v)]
                 if r_vals and r_vals[0] == "ORDINE ORIGINALE":
                     capturing = True
                     continue
+
                 if capturing:
                     # Se incontriamo un'altra sezione o fine blocco, fermiamo la cattura
                     if r_vals and r_vals[0] in ["MODALITA DI PAGAMENTO", "DOCUMENTO EMESSO"]:
                         break
+
                     original_order_rows.append(r)
 
             if original_order_rows:
                 original_df = pd.DataFrame(original_order_rows)
                 record_signature = tuple(original_df.fillna("").astype(str).values.flatten())
+
             else:
                 record_signature = tuple(rec.fillna("").astype(str).values.flatten())
 
             if record_signature in romana_signatures:
-                continue  # Salta il duplicato
-            romana_signatures.add(record_signature)
+                continue
 
-        # 4. Data Extraction Logic
+            romana_signatures.add(record_signature)
 
         # Determine starting index for items table
         # For 'CONTO ALLA ROMANA', items are listed under 'ORDINE ORIGINALE'
@@ -103,7 +112,7 @@ def analyze_restaurant_orders(file_path):
                     break
 
         if start_idx is None:
-            continue
+            raise NameError("Your file is inconsistent. Check the data")
 
         # Extract table rows starting from the header until "MODALITA DI PAGAMENTO"
         end_idx = None
@@ -113,19 +122,19 @@ def analyze_restaurant_orders(file_path):
                 end_idx = i
                 break
 
-        # Slice the dataframe up to the payment method row (exclusive)
         sub_rec = rec.loc[start_idx:end_idx - 1].copy()
 
         # Locate header row containing column names
         header_row_idx = None
         for i, row in sub_rec.iterrows():
             row_vals = [str(v).strip().upper() for v in row.values if pd.notna(v)]
+
             if "PRODOTTO" in row_vals:
                 header_row_idx = i
                 break
 
         if header_row_idx is None:
-            continue
+            raise KeyError("Key 'PRODOTTO' is missing, check your .xlsx file!")
 
         # Map column positions dynamically based on header text
         headers = [str(v).strip() for v in rec.loc[header_row_idx].values]
@@ -135,8 +144,7 @@ def analyze_restaurant_orders(file_path):
         qty_col = next((idx for idx, h in enumerate(headers) if "QUANTITÃ" in h.strip().upper()), None)
 
         if prod_col is None or total_col is None:
-            print("CHE SUCCEDEEEE")
-            continue
+            raise KeyError("Price or Total column(s) missing")
 
         total_price = 0.0
         cover_count = 0
@@ -147,9 +155,7 @@ def analyze_restaurant_orders(file_path):
             row_vals = [str(v).strip() for v in row.values]
             row_str = " ".join([str(v) for v in row.values if pd.notna(v)]).upper()
 
-            # Stop if we hit a non-item section
             if "MODALITA DI PAGAMENTO" in row_str or "DOCUMENTO EMESSO" in row_str:
-                print("NON DOVREI MAI PRINTARE")
                 break
 
             product_name = str(row_vals[prod_col]).strip()
@@ -161,10 +167,9 @@ def analyze_restaurant_orders(file_path):
                     val_str = str(total_val_raw).replace(",", ".").strip()
                     total_price += float(val_str)
             except ValueError:
-                print("CHE STRACAZZO SUCCEDE")
                 pass
 
-            # Check for coperto
+            # Check for cover charge
             if "** N. COPERTO" in product_name.upper():
                 has_cover = True
                 if qty_col is not None:
@@ -172,10 +177,9 @@ def analyze_restaurant_orders(file_path):
                         qty_str = str(row_vals[qty_col]).strip()
                         cover_count += int(float(qty_str))
                     except ValueError:
-                        print("CHE STRACAZZO SUCCEDEEEE PT.2")
                         pass
 
-        # Ignore the order if it contains no coperto
+        # Ignore the order if it contains no cover charge
         if not has_cover:
             continue
 
@@ -186,10 +190,9 @@ def analyze_restaurant_orders(file_path):
             "price_per_cover": round(total_price / cover_count, 2) if cover_count > 0 else 0.0,
         })
 
-        # 5. Compile the final dataset
+        # Compile the final dataset
     result_df = pd.DataFrame(valid_orders)
 
-    # --- CREAZIONE DEL SUMMARY DF ---
     if not result_df.empty:
         total_covers = int(result_df["cover_count"].sum())
         total_revenue = result_df["total_price"].sum()
@@ -200,25 +203,46 @@ def analyze_restaurant_orders(file_path):
         simple_avg_cover_price = result_df["price_per_cover"].mean()
 
         summary_data = [{
-            "total_covers": total_covers,
-            "total_revenue": round(total_revenue, 2),
-            "weighted_avg_cover_price": round(weighted_avg_cover_price, 2),
-            "simple_avg_cover_price": round(simple_avg_cover_price, 2),
-            "total_orders_analyzed": len(result_df)
+            "Totale coperti": total_covers,
+            "Totale incasso": round(total_revenue, 2),
+            "Prezzo medio (ponderato) per coperto": round(weighted_avg_cover_price, 2),
+            "Prezzo medio (semplice) per coperto": round(simple_avg_cover_price, 2),
+            "Totale scontrini analizzati": len(result_df)
         }]
 
         summary_df = pd.DataFrame(summary_data)
 
-        # Salvataggio o stampa dei risultati
-        result_df.to_csv("Risultati_dettaglio.csv", index=False)
-        summary_df.to_csv("Summary.csv", index=False)
+        # Salvataggio nella stessa cartella da cui viene eseguito l'exe
+        base_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals() else os.getcwd()
+        res_path = os.path.join(base_dir, "RISULTATI_TEST.csv")
+        sum_path = os.path.join(base_dir, "SUMMARY_TEST.csv")
 
+        result_df.to_csv(res_path, index=False)
+        summary_df.to_csv(sum_path, index=False)
+
+        return True, res_path
     else:
-        summary_df = pd.DataFrame()
-        print("Nessun ordine valido trovato.")
-
-    return result_df, summary_df
+        return False, None
 
 
 if __name__ == "__main__":
-    a, b = analyze_restaurant_orders('.\\test_ipratico.xlsx')
+    # Nasconde la finestra principale di tkinter, mostra solo il selettore file
+    root = tk.Tk()
+    root.withdraw()
+
+    file_path = filedialog.askopenfilename(
+        title="Seleziona il file Excel delle comande",
+        filetypes=[("File Excel", "*.xlsx"), ("Tutti i file", "*.*")]
+    )
+
+    if file_path:
+        try:
+            success, path = analyze_restaurant_orders(file_path)
+            if success:
+                messagebox.showinfo("Successo",
+                                    f"Elaborazione completata con successo!\n\nFile "
+                                    f"salvati in:\n{os.path.dirname(path)}")
+            else:
+                messagebox.showwarning("Attenzione", "Nessun ordine valido con coperto trovato nel file.")
+        except Exception as e:
+            messagebox.showerror("Errore", f"Si è verificato un errore durante l'elaborazione:\n{str(e)}")
