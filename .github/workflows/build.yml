@@ -1,0 +1,37 @@
+name: Compila app macOS
+
+# 1. Sezione 'on': definisce quando parte (qui sia al push sia manualmente)
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+# 2. Sezione 'jobs': definisce i passaggi da eseguire sul Mac cloud
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Scarica il codice del repository
+        uses: actions/checkout@v4
+
+      - name: Imposta Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Installa dipendenze e PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Compila il file .app
+        run: |
+          pyinstaller --windowed --noconfirm tuo_script.py
+
+      - name: Carica l'app compilata per il download
+        uses: actions/upload-artifact@v4
+        with:
+          name: Applicazione-macOS
+          path: dist/*.app
