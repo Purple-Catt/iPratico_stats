@@ -28,7 +28,7 @@ jobs:
 
       - name: Compila il file .app
         run: |
-          pyinstaller --windowed --noconfirm tuo_script.py
+          pyinstaller --windowed --noconfirm main.py
 
       - name: Carica l'app compilata per il download
         uses: actions/upload-artifact@v4
